@@ -155,6 +155,23 @@ inline __host__ __device__ float3 operator/(float b, float3 a)
     return make_float3(b / a.x, b / a.y, b / a.z);
 }
 
+
+inline /*__host__*/ __device__ bool operator>(float3 a, float3 b) {
+    return (a.x > b.x && a.y > b.y && a.z > b.z);
+}
+
+inline /*__host__*/ __device__ bool operator<(float3 a, float3 b) {
+    return (a.x < b.x && a.y < b.y && a.z < b.z);
+}
+
+inline /*__host__*/ __device__ bool operator==(float3 a, float3 b) {
+    return (a.x == b.x && a.y == b.y && a.z == b.z);
+}
+
+inline /*__host__*/ __device__ bool operator!=(float3 a, float3 b) {
+    return (a.x != b.x && a.y != b.y && a.z != b.z);
+}
+
 //min-max float3
 
 inline __host__ __device__ float3 fminf(float3 a, float3 b)
@@ -203,6 +220,10 @@ inline __host__ __device__ float length(float3 v)
     return sqrtf(dot(v, v));
 }
 
+inline __host__ __device__ float length_squared(float3 v) {
+    return v.x * v.x + v.y * v.y + v.z * v.z;
+}
+
 inline __host__ __device__ float3 normalize(float3 v)
 {
     float invLen = rsqrtf(dot(v, v));
@@ -221,12 +242,13 @@ inline __host__ __device__ float3 reflect(float3 i, float3 n)
     return i - 2.0f * n * dot(n, i);
 }
 
-inline __host__ __device__ float3 refract(float3 uv, float3 n, float etai_over_etat) {
-    float cos_theta = fmin(dot(-uv, n), 1.0f);
+inline __host__ __device__ float3 refract(float3& uv, float3& n, float etai_over_etat) {
+    float cos_theta = dot(-normalize(uv), n);
     float3 r_out_perp = etai_over_etat * (uv + cos_theta * n);
-    float3 r_out_parallel = -sqrtf(fabs(1.0 - length(r_out_perp)*length(r_out_perp))) * n;
+    float3 r_out_parallel = -sqrtf(fabs(1.0f - length_squared(r_out_perp))) * n;
     return r_out_parallel + r_out_perp;
 }
+
 
 
 // absolute value

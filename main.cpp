@@ -6,17 +6,14 @@
 
 #include "pathTracer.h"
 
-#define WIDTH 1440	
-#define HEIGHT 1440
-#define SAMPLES 1000
+#define WIDTH 1400	
+#define HEIGHT 1400
+#define SAMPLES 50
 
 
 
 GLuint pbo;
 using namespace std;
-
-
-
 
 
 int main() {
@@ -52,21 +49,23 @@ int main() {
 	while (!glfwWindowShouldClose(window)) {
 		glClear(GL_COLOR_BUFFER_BIT);
 		
-		if (iteration < SAMPLES) { 
-			/*if (iteration == 60) {
-				changeCamera(0.0f, 0.0f, 0.0f, 1.0f);
-				iteration = 0;
-			}*/
+		if (samples < SAMPLES) { 
+			
 			iteration++;
 			samples++;
-			//std::cerr << "\rsamples: " << iteration << std::flush;
+			/*if (iteration == 59) {
+				changeCamera(0.0f, 0.0f, 0.0f, 5.0f);
+				iteration = 0;
+			}*/
 			
 			renderKernel(WIDTH, HEIGHT, iteration, SAMPLES);
 		
 			// Measure speed
-			
+			if (iteration == SAMPLES - 1) {
+				cout << "Done" << endl;
+			}
 
-			if (glfwGetTime() >= 1.0) {
+			if (glfwGetTime() >= 1.0 && iteration < SAMPLES - 1) {
 				cout << samples << " samples/second" << endl;
 				samples = 0;
 				glfwSetTime(0.0);

@@ -22,6 +22,7 @@
 cudaGraphicsResource* cudapbo;
 uchar4* dev_map = NULL;
 float3* output_device = NULL; //pointer to image on vram
+float3* output_previous = NULL;
 float3* accumulate_buffer = NULL;
 
 //assert style function and wrapper macro, error checking can be done by 
@@ -79,10 +80,6 @@ void changeCamera(float movex, float movey, float movez, float theta) {
     }
 
     
-  
-    
-
-    
 
     camChanged = true;
     //printf("changed camera is %f %f %f  \n", mainCam.orig.x, mainCam.orig.y, mainCam.orig.z);
@@ -112,8 +109,8 @@ struct Sphere {
 // SCENE
 // 9 spheres forming a Cornell box, small enough for gpu constant memory
 __constant__ Sphere spheres[] = {
- { 1e5f, { 1e5f + 1.0f, 40.8f, 81.6f }, { 0.0f, 0.0f, 0.0f }, { 0.75f, 0.25f, 0.25f }, DIFFUSE }, //Left 
- { 1e5f, { -1e5f + 99.0f, 40.8f, 81.6f }, { 0.0f, 0.0f, 0.0f }, { .25f, .25f, .75f }, DIFFUSE }, //Rght 
+ { 1e5f, { 1e5f + 1.0f, 40.8f, 81.6f }, { 0.0f, 0.0f, 0.0f }, { 0.95f, 0.05f, 0.05f }, DIFFUSE }, //Left 
+ { 1e5f, { -1e5f + 99.0f, 40.8f, 81.6f }, { 0.0f, 0.0f, 0.0f }, { .05f, .95f, .05f }, DIFFUSE }, //Rght 
  { 1e5f, { 50.0f, 40.8f, 1e5f }, { 0.0f, 0.0f, 0.0f }, { .75f, .75f, .75f }, DIFFUSE }, //Back 
  { 1e5f, { 50.0f, 40.8f, -1e5f + 600.0f }, { 0.0f, 0.0f, 0.0f }, { 1.00f, 1.00f, 1.00f }, DIFFUSE }, //Frnt 
  { 1e5f, { 50.0f, 1e5f, 81.6f }, { 0.0f, 0.0f, 0.0f }, { .75f, .75f, .75f }, DIFFUSE }, //Botm 
@@ -121,7 +118,7 @@ __constant__ Sphere spheres[] = {
  { 16.5f, { 27.0f, 16.5f, 47.0f }, { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 1.0f }, DIFFUSE }, // small sphere 1
  { 16.5f, { 73.0f, 16.5f, 78.0f }, { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 1.0f }, REFRACT }, // small sphere 2
  //{ 16.5f, { 40.0f, 16.5f, 78.0f }, { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 1.0f }, REFRACT }, // small sphere 3
- { 600.0f, { 50.0f, 681.6f - .77f, 81.6f }, { 2.0f, 1.8f, 1.6f }, { 0.0f, 0.0f, 0.0f }, DIFFUSE }  // Light
+ { 600.0f, { 50.0f, 681.6f - .77f, 81.6f }, { 1.0f, 0.9f, 0.9f }, { 0.0f, 0.0f, 0.0f }, DIFFUSE }  // Light
 };
 
 //returns if any intersections happen and sets t to distance of closest ray intersection
@@ -156,7 +153,7 @@ __device__ float3 radiance(Ray& r, curandState* randState) { // returns ray colo
     float3 mask = make_float3(1.0f, 1.0f, 1.0f);
 
     // ray bounce loop (no Russian Roulette used) 
-    for (int bounces = 0; bounces < 4; bounces++) {  // iteration up to 4 bounces (replaces recursion in CPU code)
+    for (int bounces = 0; bounces < 15; bounces++) {  // iteration up to 4 bounces (replaces recursion in CPU code)
 
         float t;           // distance to closest intersection 
         int id = 0;        // index of closest intersected sphere 
@@ -176,6 +173,7 @@ __device__ float3 radiance(Ray& r, curandState* randState) { // returns ray colo
         // (first term in rendering equation sum) 
         accumulatedColor += mask * obj.emission;
         
+
         //Shading passes - Diffuse, Reflect, Refract
 
         //ideal lambertian diffuse reflector
@@ -213,52 +211,60 @@ __device__ float3 radiance(Ray& r, curandState* randState) { // returns ray colo
         }
 
         if (obj.mat == REFRACT) {
-            
-            
-            bool into = dot(normal, front_facing_normal) > 0; //is ray entering or leaving
-            float nc = 1.0f;  // Index of Refraction air
-            float nt = 1.5f;  // Index of Refraction glass/water
-            float nnt = into ? nc / nt : nt / nc;  // IOR ratio of refractive materials
-            float ddn = dot(r.dir, front_facing_normal);
-            float cos2t = 1.0f - nnt * nnt * (1.0f - ddn * ddn);
-            
-            if (cos2t < 0.0f) // total internal reflection 
+
+            bool into = dot(front_facing_normal, normal) > 0; // is ray entering or leaving refractive material
+            float index1 = 1.0f;  // Index of Refraction air
+            float index2 = 1.5f; //index of refraction water
+            float refraction_ratio = into ? index1/index2 : index2/index1;  // IOR ratio of refractive materials
+            float cos_theta = dot(r.dir, normalize(normal));
+            float cos2phi = 1.0f - refraction_ratio * refraction_ratio * (1.f - cos_theta*cos_theta);
+
+            if (cos2phi < 0.0f) // total internal reflection 
             {
-                d = reflect(r.dir, normal); //law of reflection
-                hitpoint += front_facing_normal * 0.01f;
-            
-            } else { //cos2t > 0, no internal reflection
+                d = reflect(r.dir, front_facing_normal); //d = r.dir - 2.0f * n * dot(n, r.dir);
+                hitpoint += front_facing_normal * 0.001f;
+            }
+            else // cos2t > 0
+            {
+                // compute direction of transmission ray
 
-                float3 transmissionDirection = normalize(r.dir * nnt - normal * ((into ? 1 : -1) * (ddn * nnt + sqrtf(cos2t))));
+                float3 tdir = normalize(r.dir * refraction_ratio - (into ? normal : -normal) * (sqrtf(1 - cos2phi)));
 
-                float R0 = (nt - nc) * (nt - nc) / (nt + nc) * (nt + nc);
-                float c = 1.f - (into ? -ddn : dot(transmissionDirection, normal));
-                float Re = R0 + (1.f - R0) * c * c * c * c * c;
-                float Tr = 1 - Re; // Transmission
-                float P = .25f + .5f * Re;
-                float RP = Re / P;
-                float TP = Tr / (1.f - P);
+                //printf("%f %f %f \n", tdir.x, tdir.y, tdir.z);
+
+                //Schlick's approximation
+                float R0 = (index2 - index1) * (index2 - index1) / (index2 + index1) * (index2 + index1);
+                float c = 1.f - (into ? -cos_theta : dot(tdir, normal));
+                float schlick = R0 + (1.f - R0) * c * c * c * c * c; 
+                float transmission = 1 - schlick; // Transmission
+                float P = .25f + .5f * schlick;
+                float RP = schlick / P;
+                float TP = transmission / (1.f - P);
+                
 
                 // randomly choose reflection or transmission ray
-                if (curand_uniform(randState) < 0.25) // reflection ray
+                if (schlick > curand_uniform(randState)) // reflection ray
                 {
                     mask *= RP;
-                    d = reflect(r.dir, normal);
+                    //d = reflect(r.dir, normal);
                     hitpoint += front_facing_normal * 0.02f;
+
                 }
                 else // transmission ray
                 {
                     mask *= TP;
-                    d = transmissionDirection; //r = Ray(x, tdir); 
-                    hitpoint += front_facing_normal * 0.0005f; // epsilon must be small to avoid artefacts
+                    d = tdir; //r = Ray(x, tdir); 
+                    hitpoint += front_facing_normal * 0.000005f; // epsilon must be small to avoid artefacts
+                                               
                 }
+
             }
 
         }
-
         //set up origin/direction of next path segment
         r.orig = hitpoint;
         r.dir = d;
+        
     }
 
     return accumulatedColor;
@@ -268,7 +274,7 @@ __device__ float3 radiance(Ray& r, curandState* randState) { // returns ray colo
 // __global__ : executed on the device (GPU) and callable only from host (CPU) 
 // this kernel runs in parallel on all the CUDA threads
 
-__global__ void render_kernel(float3* output, Camera cam, int width, int height, int hashedFrame, int iteration, int samples) {
+__global__ void render_kernel(float3* output, float3* previous, Camera cam, int width, int height, int hashedFrame, int iteration, int samples) {
 
     // assign a CUDA thread to every pixel (x,y) 
     // blockIdx, blockDim and threadIdx are CUDA specific keywords
@@ -279,7 +285,7 @@ __global__ void render_kernel(float3* output, Camera cam, int width, int height,
     int threadId = (blockIdx.x + blockIdx.y * gridDim.x) * (blockDim.x * blockDim.y) + (threadIdx.y * blockDim.x) + threadIdx.x;
 
     curandState randState;
-    curand_init(hashedFrame + threadId, 0, 0, &randState);
+    curand_init(hashedFrame + threadId, 0, 0, &randState); //for getting a new hash every frame, which results in more spread out random rays
 
     int i = x + y*width; // pixel index
 
@@ -291,16 +297,29 @@ __global__ void render_kernel(float3* output, Camera cam, int width, int height,
 
     r = make_float3(0.0f); // reset r to zero for every pixel 
 
-   // compute primary ray direction
-   float3 d = cam.dir + cx * ((.25 + x) / width - .5) + cy * ((.25 + y) / height - .5);
+   // compute primary ray direction, added jitter for anti aliasing
+   float3 d = cam.dir + cx * ((.25 + x + curand_uniform(&randState)) / width - .5) + cy * ((.25 + y + curand_uniform(&randState)) / height - .5);
 
     // create primary ray, add incoming radiance to pixelcolor
-    r = radiance(Ray(cam.orig + d * 40, normalize(d)), &randState) * (1. / samples);
+    r = radiance(Ray(cam.orig + d * 40, normalize(d)), &randState) * (1.0f / samples);
    
     // write rgb value of pixel to image buffer on the GPU, clamp value to [0.0f, 1.0f] range
-    output[i].x += clamp(r.x, 0.0f, 1.0f);
-    output[i].y += clamp(r.y, 0.0f, 1.0f); 
-    output[i].z += clamp(r.z, 0.0f, 1.0f);
+   
+    // if iterations < samples then keep accumulating, save to previous buffer
+    if (iteration < samples) { 
+         output[i].x += clamp(r.x, 0.0f, 1.0f);
+         output[i].y += clamp(r.y, 0.0f, 1.0f);
+         output[i].z += clamp(r.z, 0.0f, 1.0f);
+
+         previous[i] = output[i];
+    }
+    else { //once iteration == samples then just display the previous buffer, since no more calculation needs to be done
+        output[i] = previous[i];
+        return;
+    }
+
+    
+        
 }
 
   
@@ -311,7 +330,7 @@ inline int toInt(float x) { return int(pow(clamp(x), 1 / 2.2) * 255 + .5); }  //
 
 void allocateMemory(int width, int height) {
     cudaMalloc(&output_device, width * height * sizeof(float3)); // allocate memory on the CUDA device (GPU VRAM)
-
+    cudaMalloc(&output_previous, width * height * sizeof(float3));
 }
 
 // free CUDA memory
@@ -393,7 +412,7 @@ void renderKernel(int width, int height, int iteration, int samples) {
         clearScreen << <grid, block >> > (dev_map, width, height, output_device);
         camChanged = false;
     }
-    render_kernel << < grid, block >> > (output_device, mainCam, width, height, wangHash(iteration), iteration, samples);
+    render_kernel << < grid, block >> > (output_device, output_previous, mainCam, width, height, wangHash(iteration), iteration, samples);
     sendImageToPBO << <grid, block >> > (dev_map, width, height, output_device);
     
     gpuErrchk(cudaDeviceSynchronize());

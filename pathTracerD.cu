@@ -22,8 +22,8 @@
 cudaGraphicsResource* cudapbo;
 uchar4* dev_map = NULL;
 float3* output_device = NULL; //pointer to image on vram
-float3* output_previous = NULL;
-float3* accumulate_buffer = NULL;
+float3* output_previous = NULL; //
+
 
 //assert style function and wrapper macro, error checking can be done by 
 //wrapping each API call 
@@ -79,8 +79,6 @@ void changeCamera(float movex, float movey, float movez, float theta) {
         mainCam.dir = normalize(mainCam.dir);
     }
 
-    
-
     camChanged = true;
     //printf("changed camera is %f %f %f  \n", mainCam.orig.x, mainCam.orig.y, mainCam.orig.z);
 };
@@ -117,9 +115,36 @@ __constant__ Sphere spheres[] = {
  { 1e5f, { 50.0f, -1e5f + 81.6f, 81.6f }, { 0.0f, 0.0f, 0.0f }, { .75f, .75f, .75f }, DIFFUSE }, //Top 
  { 16.5f, { 27.0f, 16.5f, 47.0f }, { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 1.0f }, DIFFUSE }, // small sphere 1
  { 16.5f, { 73.0f, 16.5f, 78.0f }, { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 1.0f }, REFRACT }, // small sphere 2
- //{ 16.5f, { 40.0f, 16.5f, 78.0f }, { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 1.0f }, REFRACT }, // small sphere 3
+ { 16.5f, { 40.0f, 56.5f, 78.0f }, { 0.0f, 0.0f, 0.0f }, { 1.0f, 1.0f, 1.0f }, SPECULAR }, // small sphere 3
  { 600.0f, { 50.0f, 681.6f - .77f, 81.6f }, { 1.0f, 0.9f, 0.9f }, { 0.0f, 0.0f, 0.0f }, DIFFUSE }  // Light
 };
+
+
+
+
+//Moller-Trumbore algorithm for ray triangle intersection
+__device__ float rayTriangleIntersection(const Ray& r, const float3& v0, const float3& edge1, const float3& edge2) {
+    
+    float3 tvec = r.orig - v0;
+    float3 pvec = cross(r.dir, edge2);
+    float det = dot(edge1, edge2);
+
+    //det = __fdividef(1.0f, det);  // CUDA intrinsic function 
+    det = 1.0f / det;
+
+    float u = dot(tvec, pvec) * det;
+
+    if (u < 0.0f || u > 1.0f) return -1.0f;
+
+    float3 qvec = cross(tvec, edge1);
+
+    float v = dot(r.dir, qvec) * det;
+
+    if (v < 0.0f || (u + v) > 1.0f) return -1.0f;
+
+    return dot(edge2, qvec) * det;
+
+}
 
 //returns if any intersections happen and sets t to distance of closest ray intersection
 //sets id as the id of object hit
@@ -153,7 +178,7 @@ __device__ float3 radiance(Ray& r, curandState* randState) { // returns ray colo
     float3 mask = make_float3(1.0f, 1.0f, 1.0f);
 
     // ray bounce loop (no Russian Roulette used) 
-    for (int bounces = 0; bounces < 15; bounces++) {  // iteration up to 4 bounces (replaces recursion in CPU code)
+    for (int bounces = 0; bounces < 10; bounces++) {  // iteration up to 4 bounces (replaces recursion in CPU code)
 
         float t;           // distance to closest intersection 
         int id = 0;        // index of closest intersected sphere 
@@ -216,7 +241,7 @@ __device__ float3 radiance(Ray& r, curandState* randState) { // returns ray colo
             float index1 = 1.0f;  // Index of Refraction air
             float index2 = 1.5f; //index of refraction water
             float refraction_ratio = into ? index1/index2 : index2/index1;  // IOR ratio of refractive materials
-            float cos_theta = dot(r.dir, normalize(normal));
+            float cos_theta = dot(r.dir, normal);
             float cos2phi = 1.0f - refraction_ratio * refraction_ratio * (1.f - cos_theta*cos_theta);
 
             if (cos2phi < 0.0f) // total internal reflection 
@@ -228,9 +253,10 @@ __device__ float3 radiance(Ray& r, curandState* randState) { // returns ray colo
             {
                 // compute direction of transmission ray
 
-                float3 tdir = normalize(r.dir * refraction_ratio - (into ? normal : -normal) * (sqrtf(1 - cos2phi)));
+                float3 tdir = refract(r.dir, (into ? normal : -normal), refraction_ratio);
+                //float3 tdir = normalize(r.dir * refraction_ratio - (into ? normal : -normal) * (sqrtf(1 - cos2phi)));
 
-                //printf("%f %f %f \n", tdir.x, tdir.y, tdir.z);
+               
 
                 //Schlick's approximation
                 float R0 = (index2 - index1) * (index2 - index1) / (index2 + index1) * (index2 + index1);
@@ -246,7 +272,7 @@ __device__ float3 radiance(Ray& r, curandState* randState) { // returns ray colo
                 if (schlick > curand_uniform(randState)) // reflection ray
                 {
                     mask *= RP;
-                    //d = reflect(r.dir, normal);
+                    d = reflect(r.dir, normal);
                     hitpoint += front_facing_normal * 0.02f;
 
                 }

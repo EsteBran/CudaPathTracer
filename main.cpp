@@ -8,7 +8,7 @@
 
 #define WIDTH 1400	
 #define HEIGHT 1400
-#define SAMPLES 50
+#define SAMPLES 2000
 
 
 

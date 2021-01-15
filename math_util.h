@@ -249,6 +249,10 @@ inline __host__ __device__ float3 refract(float3& uv, float3& n, float etai_over
     return r_out_parallel + r_out_perp;
 }
 
+inline __host__ __device__ float schlick(float cosine, float ratio) {
+    float R0 = (1.0f - ratio) * (1.0f - ratio) / (1.0f + ratio) * (1.0f + ratio);
+    return R0 + (1.0f - R0) * cosine * cosine * cosine * cosine * cosine;
+}
 
 
 // absolute value

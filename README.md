@@ -5,6 +5,8 @@ The window is built using GLFW library, and a Pixel Buffer Object (PBO) is built
 
 So far, the path tracer can show Global Illumination of three different types of materials: diffuse, specular, and refracting (dielectric). These are calculated using, respectively, ideal Lambertian BRDF, law of reflection, and smooth dielectric BSDF.
 
+On my gtx 1070ti, the pathtracer is able to get 60fps with about 1 sample per pixel with 10 bounces. Increasing the number of bounces to beyond 50 drops speed to about 30fps.
+
 
 Example Images
 
